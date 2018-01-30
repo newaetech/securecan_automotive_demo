@@ -36,6 +36,7 @@ TARGET = secure-can
 # Header files (.h) are automatically pulled in.
 SRC += secure-can.c
 SRC += can.c
+SRC += adc.c
 #SRC += simpleserial-can.c
 
 CFLAGS += -DHAL_CAN_MODULE_ENABLED  

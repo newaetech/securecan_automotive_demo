@@ -102,6 +102,8 @@
 #include "stm32f3_hal.h"
 #include "stm32f3xx_hal_def.h"
 #include "stm32f3xx_hal_can.h"
+#include "stm32f3xx_hal_adc.h"
+#include "stm32f3xx_hal_adc_ex.h"
 
 uint32_t HAL_GetTick(void);
 /** @addtogroup STM32F3xx_HAL_Driver
