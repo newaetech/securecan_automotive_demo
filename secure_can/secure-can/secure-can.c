@@ -22,29 +22,16 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include "can.h"
 #include "adc.h"
 
 static void print_can_error(char *pstring, can_return_t canError);
 static void print_adc_error(char *str, adc_return_t err);
 
-uint8_t get_key(uint8_t* k) {
-	aes_indep_key(k);
-	return 0x00;
-}
-
-uint8_t get_pt(uint8_t* pt) {
-	trigger_high();
-	aes_indep_enc(pt); /* encrypting the data block */
-	trigger_low();
-	simpleserial_put('r', 16, pt);
-	return 0x00;
-}
-
-uint8_t reset(uint8_t* x) {
-	// Reset key here if needed
-	return 0x00;
-}
+const uint8_t Kenc[] = {0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C};
+const uint8_t Kauth[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+const uint8_t IV[] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
 
 void send_string(char *pString) {
 	do {
@@ -85,14 +72,146 @@ void print_number(uint8_t value) {
 
 #define M_DELAY(x)
 
+typedef struct can_input {
+	uint32_t msgnum;
+	uint32_t baseid;
+	uint8_t data[4];
+} can_input;
+
+typedef struct seccan_packet {
+	uint32_t msgnum;
+	uint32_t baseid;
+	uint8_t payload[8];
+} seccan_packet;
+
+//all good, I think
+void get_can_packet(seccan_packet *out, can_input *in)
+{
+	uint8_t nonce_enc[16] = {0};
+	uint8_t nonce_auth[16] = {0};
+
+	nonce_enc[0] = (in->msgnum >> 16) & 0xFF;
+	nonce_enc[1] = (in->msgnum >> 8) & 0xFF;
+	nonce_enc[2] = in->msgnum & 0xFF;
+	nonce_enc[3] = (in->baseid >> 8) & 0xFF;
+	nonce_enc[4] = (in->baseid & 0xFF);
+
+	memcpy(nonce_auth, nonce_enc, 5); //copy nonce over to enc
+	//nonce_enc all done
+	memcpy(nonce_auth + 12, in->data, 4); //copy data over
+
+	//do XORing with IV for auth
+	int i = 0;
+	for (i = 0; i < 16; i++) {
+		nonce_auth[i] ^= IV[i];
+	}
+
+	aes_indep_key(Kenc);
+	aes_indep_enc(nonce_enc);
+
+	aes_indep_key(Kauth);
+	aes_indep_enc(nonce_auth);
+
+	for (i = 8; i < 12; i++) {
+		nonce_enc[i] ^= in->data[i - 8];
+	}
+	for (i = 12; i < 16; i++) {
+		nonce_enc[i] ^= nonce_auth[i - 12];
+	}
+
+	memcpy(out->payload, nonce_enc + 8, 8);
+	out->baseid = in->baseid;
+	out->msgnum = in->msgnum;
+}
+
+int decrypt_can_packet(can_input *out, seccan_packet *in)
+{
+	out->baseid = in->baseid;
+	out->msgnum = in->msgnum;
+	uint8_t nonce_enc[16] = {0};
+	uint8_t nonce_auth[16] = {0};
+	//first need output from Kenc AES, so first steps are the same
+
+	nonce_enc[0] = (in->msgnum >> 16) & 0xFF;
+	nonce_enc[1] = (in->msgnum >> 8) & 0xFF;
+	nonce_enc[2] = in->msgnum & 0xFF;
+	nonce_enc[3] = (in->baseid >> 8) & 0xFF;
+	nonce_enc[4] = (in->baseid & 0xFF);
+
+	memcpy(nonce_auth, nonce_enc, 5); //copy nonce over to enc
+
+	aes_indep_key(Kenc);
+	aes_indep_enc(nonce_enc);
+
+	//can now get data by XORing output of Kenc AES with data part of packet
+	int i = 0;
+	for (; i < 4; i++) {
+		out->data[i] = in->payload[i] ^ nonce_enc[i + 8];
+	}
+
+	//now check authentication by running through Kauth procedure
+	memcpy(nonce_auth + 12, out->data, 4); //copy data over
+
+	for (i = 0; i < 16; i++) {
+		nonce_auth[i] ^= IV[i];
+	}
+
+	aes_indep_key(Kauth);
+	aes_indep_enc(nonce_auth);
+
+	for (i = 0; i < 4; i++) {
+		nonce_auth[i] ^= nonce_enc[i + 12];
+	}
+
+	//returns 0 if auth matches, nonzero if auth doesn't match
+	return memcmp(nonce_auth, in->payload + 4, 4);
+}
+
+void send_can_packet(seccan_packet *packet)
+{
+	can_return_t rval = 0;
+	uint32_t ext_id = (packet->baseid) & 0x7FF;
+	ext_id |= (packet->msgnum << 11) & 0x1FFFF800;
+
+	if (rval = write_can(ext_id, packet->payload, 8), rval < 0) {
+		print_can_error("Tx ERROR:", rval);
+	}
+}
+
+int read_can_packet(seccan_packet *packet)
+{
+	can_return_t rval = 0;
+	uint32_t ext_id = 0;
+
+	if (rval = read_can(packet->payload, &ext_id, 8), rval < 0) {
+		print_can_error("Rx ERROR:", rval);
+		return -1;
+	} else {
+		if (rval != 8) {
+			send_string("Msg length too short");
+			return -1;
+		} else {
+			packet->baseid = ext_id & 0x7FF;
+			packet->msgnum = (ext_id >> 11) & 0x3FFFF;
+			return 0;
+		}
+	}
+}
+
 int main(void) {
 	can_return_t rval;
-	uint8_t tmp[KEY_LENGTH] = { DEFAULT_KEY };
-	uint8_t write_data[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
-	uint8_t read_data[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
 	uint32_t read_address;
 	adc_return_t adcerr;
 	int tick = 0;
+
+	can_input my_data = {
+				.msgnum = 0x456,
+				.baseid = 0x2D0,
+				.data = {0xDE, 0xAD, 0xBE, 0xEF}
+	};
+
+	can_input their_data = {0};
+	seccan_packet packet = {0};
 
 	platform_init();
 	init_uart();
@@ -101,14 +220,14 @@ int main(void) {
 	trigger_setup();
 
 	aes_indep_init();
-	aes_indep_key(tmp);
+	get_can_packet(&packet, &my_data);
+	decrypt_can_packet(&their_data, &packet);
 
 	send_string("Starting...\n");
 
 	for (volatile unsigned int i = 0; i < 10000; i++)
 		;
 
-	rval = write_can(0xab, write_data, 7);
 	if (rval < 0) {
 		print_can_error("Tx ERROR:", rval);
 	}
@@ -119,61 +238,26 @@ int main(void) {
 	}
 
 	while (1) {
-		uint16_t adc_reading = 0;
 
-		adcerr = read_ADC(&adc_reading);
-		if (adcerr < 0) {
-			print_adc_error("Error initializing ADC", adcerr);
-		}
-		send_adc(adc_reading);
-		send_adc(adc_reading);
-		send_adc(adc_reading);
+		//
+		if (!read_can_packet(&packet)) {
+			//we got a packet, we'll just take the data from their
+			//packet, increment the bottom char and send it back
 
-		//add adc stuff here
-		write_data[1]++;
+			decrypt_can_packet(&their_data, &packet);
+			their_data.data[0]++;
+			memcpy(my_data.data, their_data.data, 4);
+			my_data.msgnum++;
 
-		send_string("Tick [");
-		print_number(tick++);
-		send_string("] Compiled:"__TIME__"\n");
-		write_can(0x1fabcdef, write_data, 7);
-		if (rval < 0) {
-			print_can_error("Tx ERROR:", rval);
+			get_can_packet(&packet, &my_data);
+			send_can_packet(&packet);
 		}
 
 		for (volatile unsigned int j = 0; j < 50; j++) {
 			for (volatile unsigned int i = 0; i < 10000; i++)
 				;
 		}
-		rval = read_can(read_data, &read_address, 8);
-		if (rval > 0) {
-			write_data[1] = 0x50;
-			send_string("Received from: ");
-			for (int i = sizeof(uint32_t); i > 0; i--) {
-				uint8_t print_data;
-				print_data = (uint8_t) ((read_address >> (8 * (i - 1))
-						& 0x000000ff));
-				print_number(print_data);
-			}
-			send_string(":\n");
-
-			for (int i = 0; i < rval; i++) {
-				print_number(read_data[i]);
-				send_string(" ");
-			}
-			send_string("\n");
-		} else {
-			if (rval != CAN_RET_TIMEOUT) {
-				print_can_error("Rx ERROR:", rval);
-			}
-		}
 	}
-
-	simpleserial_init();
-	simpleserial_addcmd('k', 16, get_key);
-	simpleserial_addcmd('p', 16, get_pt);
-	simpleserial_addcmd('x', 0, reset);
-	while (1)
-		simpleserial_get();
 }
 
 static void print_can_error(char *pstring, can_return_t canError) {

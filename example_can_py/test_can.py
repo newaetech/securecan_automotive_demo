@@ -3,12 +3,82 @@ import PCANBasic as pcan
 import sys
 import time
 
+from Crypto.Cipher import AES
+
+
+class secure_can():
+    def __init__(self):
+        self.auth_key = str(bytearray( range(0, 16) ))
+        self.enc_key = str(bytearray( [ 0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C ]))
+        self.auth_iv = str(bytearray( [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]))
+        
+        
+    #returns payload based on data, id, and cnt
+    def encrypt(self, msg_data, msg_id, msg_cnt):
+        enc_ecb = AES.new(self.enc_key, AES.MODE_ECB)
+        enc_mac = AES.new(self.auth_key, AES.MODE_CBC, self.auth_iv)
+
+        nonce = [(msg_cnt >> 16) &0xff, (msg_cnt >> 8) & 0xff, msg_cnt & 0xff]
+        nonce.extend( [ (msg_id >> 8) & 0xff, msg_id & 0xff ] )
+        nonce_auth = nonce[:]
+        nonce_ctr = nonce[:]
+
+        nonce_auth.extend([0] * 7)
+        nonce_auth.extend(msg_data)
+        
+        #Nonce ctr tag - no data
+        nonce_ctr.extend( [0] * 11 )
+        
+        mac = enc_mac.encrypt(str(bytearray(nonce_auth)))
+        mac = list(bytearray(mac))
+        
+        ctr_out = enc_ecb.encrypt(str(bytearray(nonce_ctr)))
+        ctr_out = list(bytearray(ctr_out))
+        payload = [0] * 8
+
+        for i in range(0, 4):
+            payload[i] = ctr_out[i+8] ^ msg_data[i]
+            payload[i + 4] = ctr_out[i+12] ^ mac[i]
+        
+        return payload
+            
+    #returns data based on payload, id, and cnt
+    def decrypt(self, payload, msg_id, msg_cnt):
+        enc_ecb = AES.new(self.enc_key, AES.MODE_ECB)
+        
+        nonce = [(msg_cnt >> 16) &0xff, (msg_cnt >> 8) & 0xff, msg_cnt & 0xff]
+        nonce.extend( [ (msg_id >> 8) & 0xff, msg_id & 0xff ] )
+        nonce_ctr = nonce[:]
+        
+        nonce_ctr.extend( [0] * 11 )
+        ctr_out = enc_ecb.encrypt(str(bytearray(nonce_ctr)))
+        ctr_out = list(bytearray(ctr_out))
+        
+        data = [0] * 4
+        for i in range(0, 4):
+            data[i] = payload[i] ^ ctr_out[i + 8]
+            
+        return data
+        
+        
+    def ext_id(self, msg_id, msg_cnt):
+        ret = msg_id & 0x7FF
+        ret |= (msg_cnt << 11) & 0x1FFFF800
+        return ret
+    #[id, cnt]
+    def get_id_cnt(self, ext_id):
+        return [ext_id & 0x7FF, (ext_id >> 11) & 0x3FFFF]
+        pass
+        
+        
 class can_thread(threading.Thread):
     """ Implementation of serial running in a thread.
     This will run a thread when the start method is called
     
     Inheriets the threading class.
     """
+
+    
     def __init__(self, rxcallback):
         threading.Thread.__init__(self)
         self.__quit = False
@@ -16,6 +86,9 @@ class can_thread(threading.Thread):
         self.__caniface = pcan.PCANBasic()
         self.__connected = False
         self.__rxcallback = rxcallback
+        
+    #def create_packet(self):
+        
 
     def disconnect(self):
         self.__caniface.Uninitialize(self.__canbus)
@@ -97,6 +170,11 @@ class test_can():
         self.__can = can_thread(self.rx_from_can)
         self.__can.start()
         self.__connected = False
+        self.__encryption = secure_can()
+        self.__data = [0xDE, 0xAD, 0xBE, 0xEF]
+        self.__msgid = 0x2D1
+        self.__cnt = 0x456 #can update this stuff later if need be
+        
 
     def help(self):
         for msg in self.helpMenu:
@@ -105,9 +183,14 @@ class test_can():
     def rx_from_can(self, address, data):
         print 'RX FROM CAN'
         print '-----------'
-        print 'Address = ' + str(hex(address))
+        id_parts = self.__encryption.get_id_cnt(address)
+        print 'Message ID = ' + str(hex(id_parts[0]))
+        print 'Message cnt = ' + str(hex(id_parts[1]))
+        #print 'Address = ' + str(hex(address))
+        
+        decrypt_data = self.__encryption.decrypt(data, id_parts[0], id_parts[1])
         sys.stdout.write('data = ')
-        print ' '.join('{:02x}'.format(x) for x in data)
+        print ' '.join('{:02x}'.format(x) for x in decrypt_data)
         pass
 
     def start(self):
@@ -119,7 +202,11 @@ class test_can():
                 break;
             elif data == 'send' or data == 's':
                 print 'Send now!'
-                self.__can.write(0x2ef, [0x01, 0x02])
+                payload = self.__encryption.encrypt(self.__data, self.__msgid, self.__cnt)
+                ext_id = self.__encryption.ext_id(self.__msgid, self.__cnt)
+                self.__can.write(ext_id, payload)
+                #self.__can.write(0x2ef, [0x01, 0x02])
+                #instead 
             elif data == 'Send' or data == 'S':
                 print 'Send now!'
                 self.__can.write(0x1eabcdef, [0x01, 0x02])

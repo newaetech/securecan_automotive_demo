@@ -66,6 +66,12 @@ adc_return_t init_ADC(void)
 	return 0;
 }
 
+void adc_delay(void)
+{
+	volatile uint32_t i;
+	for (i = 0; i < 50000; i++);
+}
+
 adc_return_t read_ADC(uint16_t *val)
 {
 	if (HAL_ADC_Start(&myadc) != HAL_OK) {
@@ -73,6 +79,7 @@ adc_return_t read_ADC(uint16_t *val)
 	}
 	if (HAL_ADC_PollForConversion(&myadc, ADC_READ_TIMEOUT) == HAL_OK) {
 		//good to read
+		adc_delay();
 		*val = HAL_ADC_GetValue(&myadc);
 	} else {
 		//error
