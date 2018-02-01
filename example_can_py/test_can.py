@@ -9,8 +9,8 @@ from Crypto.Cipher import AES
 class secure_can():
     def __init__(self):
         self.auth_key = str(bytearray( range(0, 16) ))
-        self.enc_key = str(bytearray( [ 0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C ]))
-        self.auth_iv = str(bytearray( [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]))
+        self.enc_key = str(bytearray( [ 0x21, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C ]))
+        self.auth_iv = str(bytearray( [0x01, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]))
         
         
     #returns payload based on data, id, and cnt
@@ -42,13 +42,15 @@ class secure_can():
         
         return payload
             
-    #returns data based on payload, id, and cnt
+    #returns (data, auth_passed) based on payload, id, and cnt
     def decrypt(self, payload, msg_id, msg_cnt):
         enc_ecb = AES.new(self.enc_key, AES.MODE_ECB)
+        enc_mac = AES.new(self.auth_key, AES.MODE_CBC, self.auth_iv)
         
         nonce = [(msg_cnt >> 16) &0xff, (msg_cnt >> 8) & 0xff, msg_cnt & 0xff]
         nonce.extend( [ (msg_id >> 8) & 0xff, msg_id & 0xff ] )
         nonce_ctr = nonce[:]
+        nonce_auth = nonce[:]
         
         nonce_ctr.extend( [0] * 11 )
         ctr_out = enc_ecb.encrypt(str(bytearray(nonce_ctr)))
@@ -58,8 +60,15 @@ class secure_can():
         for i in range(0, 4):
             data[i] = payload[i] ^ ctr_out[i + 8]
             
-        return data
+        nonce_auth.extend([0] * 7)
+        nonce_auth.extend(data)
         
+        mac = enc_mac.encrypt(str(bytearray(nonce_auth)))
+        mac = list(bytearray(mac))
+        
+        tag_enc = [ctr_out[i+12] ^ mac[i] for i in range(0, 4)]
+        
+        return (data, cmp(payload[4:], tag_enc) == 0)
         
     def ext_id(self, msg_id, msg_cnt):
         ret = msg_id & 0x7FF
@@ -173,7 +182,7 @@ class test_can():
         self.__encryption = secure_can()
         self.__data = [0xDE, 0xAD, 0xBE, 0xEF]
         self.__msgid = 0x2D1
-        self.__cnt = 0x456 #can update this stuff later if need be
+        self.__cnt = 0x0 #can update this stuff later if need be
         
 
     def help(self):
@@ -189,8 +198,16 @@ class test_can():
         #print 'Address = ' + str(hex(address))
         
         decrypt_data = self.__encryption.decrypt(data, id_parts[0], id_parts[1])
-        sys.stdout.write('data = ')
-        print ' '.join('{:02x}'.format(x) for x in decrypt_data)
+        sys.stdout.write('raw_data = ')
+        print ' '.join('{:02x}'.format(x) for x in decrypt_data[0])
+        if decrypt_data[1]:
+            print 'Authentication passed!'
+        else:
+            print 'Authentication failed!'
+            
+        msg = decrypt_data[0][:]
+        voltage = ((msg[1] << 8) | msg[0]) / 4096.0 * 3.3
+        print 'Voltage: {}'.format(voltage)
         pass
 
     def start(self):
@@ -205,7 +222,8 @@ class test_can():
                 payload = self.__encryption.encrypt(self.__data, self.__msgid, self.__cnt)
                 ext_id = self.__encryption.ext_id(self.__msgid, self.__cnt)
                 self.__can.write(ext_id, payload)
-                #self.__can.write(0x2ef, [0x01, 0x02])
+                self.__cnt += 1
+                
                 #instead 
             elif data == 'Send' or data == 'S':
                 print 'Send now!'

@@ -19,6 +19,8 @@
 #include "aes-independant.h"
 #include "hal.h"
 #include "simpleserial.h"
+#include "stm32f3_hal_lowlevel.h"
+#include "stm32f3_hal.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -29,9 +31,9 @@
 static void print_can_error(char *pstring, can_return_t canError);
 static void print_adc_error(char *str, adc_return_t err);
 
-const uint8_t Kenc[] = {0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C};
-const uint8_t Kauth[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-const uint8_t IV[] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+uint8_t Kenc[] = {0x21, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C};
+uint8_t Kauth[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+uint8_t IV[] = {0x01, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
 
 void send_string(char *pString) {
 	do {
@@ -46,32 +48,6 @@ void send_adc(uint16_t val) {
 	send_string(buf);
 }
 
-/*****************************************************************************/
-/**
- @brief Prints a 8 bit hex number to the serial port as ascii.
- @param value - The value to print.
- **/
-/*****************************************************************************/
-void print_number(uint8_t value) {
-	uint8_t temp = ((value >> 4) & 0x0f);
-	if (temp >= 0x0a) {
-		temp += 0x41 - 0x0a;
-	} else {
-		temp += 0x30;
-	}
-	putch(temp);
-
-	temp = (value & 0x0f);
-	if (temp >= 0x0a) {
-		temp += 0x41 - 0x0a;
-	} else {
-		temp += 0x30;
-	}
-	putch(temp);
-}
-
-#define M_DELAY(x)
-
 typedef struct can_input {
 	uint32_t msgnum;
 	uint32_t baseid;
@@ -84,7 +60,7 @@ typedef struct seccan_packet {
 	uint8_t payload[8];
 } seccan_packet;
 
-//all good, I think
+
 void get_can_packet(seccan_packet *out, can_input *in)
 {
 	uint8_t nonce_enc[16] = {0};
@@ -183,7 +159,7 @@ int read_can_packet(seccan_packet *packet)
 	can_return_t rval = 0;
 	uint32_t ext_id = 0;
 
-	if (rval = read_can(packet->payload, &ext_id, 8), rval < 0) {
+	if (rval = read_can(packet->payload, &ext_id, 8), rval < 0 && rval != CAN_RET_TIMEOUT) {
 		print_can_error("Rx ERROR:", rval);
 		return -1;
 	} else {
@@ -198,39 +174,31 @@ int read_can_packet(seccan_packet *packet)
 	}
 }
 
+void setup(void)
+{
+	platform_init();
+	init_uart();
+	MX_CAN_Init();
+
+	trigger_setup();
+	aes_indep_init();
+}
+
 int main(void) {
-	can_return_t rval;
-	uint32_t read_address;
 	adc_return_t adcerr;
-	int tick = 0;
 
 	can_input my_data = {
 				.msgnum = 0x456,
 				.baseid = 0x2D0,
 				.data = {0xDE, 0xAD, 0xBE, 0xEF}
 	};
-
-	can_input their_data = {0};
 	seccan_packet packet = {0};
 
-	platform_init();
-	init_uart();
-	MX_CAN_Init();
-
-	trigger_setup();
-
-	aes_indep_init();
-	get_can_packet(&packet, &my_data);
-	decrypt_can_packet(&their_data, &packet);
-
+	setup();
 	send_string("Starting...\n");
 
 	for (volatile unsigned int i = 0; i < 10000; i++)
 		;
-
-	if (rval < 0) {
-		print_can_error("Tx ERROR:", rval);
-	}
 
 	adcerr = init_ADC();
 	if (adcerr < 0) {
@@ -238,19 +206,15 @@ int main(void) {
 	}
 
 	while (1) {
-
-		//
-		if (!read_can_packet(&packet)) {
-			//we got a packet, we'll just take the data from their
-			//packet, increment the bottom char and send it back
-
-			decrypt_can_packet(&their_data, &packet);
-			their_data.data[0]++;
-			memcpy(my_data.data, their_data.data, 4);
-			my_data.msgnum++;
-
+		uint16_t adc_value = 0;
+		if (adcerr = read_ADC(&adc_value), adcerr == 0) {
+			my_data.data[0] = (adc_value) & 0xFF;
+			my_data.data[1] = (adc_value >> 8);
 			get_can_packet(&packet, &my_data);
 			send_can_packet(&packet);
+			my_data.msgnum++;
+		} else {
+			print_adc_error("", adcerr);
 		}
 
 		for (volatile unsigned int j = 0; j < 50; j++) {

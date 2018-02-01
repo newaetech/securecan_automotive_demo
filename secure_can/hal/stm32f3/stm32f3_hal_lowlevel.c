@@ -36,6 +36,7 @@
 
 
 #include "stm32f3_hal.h"
+#include "stm32f3xx_hal_cortex.h"
 #include "stm32f3_hal_lowlevel.h"
 #include "stm32f3xx_hal_rcc.h"
 #include "stm32f3xx_hal_gpio.h"
@@ -47,11 +48,44 @@
 
 //#define assert_param(expr) ((void)0U)
 uint32_t hal_sys_tick;
+uint32_t uwTick = 0;
+#define ENABLE_TICK_TIMING 0
 
+#ifndef ENABLE_TICK_TIMING
+HAL_StatusTypeDef HAL_InitTick(uint32_t TickPriority)
+{
+	return HAL_OK;
+}
 uint32_t HAL_GetTick(void)
 {
 	return hal_sys_tick++;
 }
+void HAL_IncTick(void)
+{
+}
+#else
+__weak HAL_StatusTypeDef HAL_InitTick(uint32_t TickPriority)
+{
+  /*Configure the SysTick to have interrupt in 1ms time basis*/
+  HAL_SYSTICK_Config(SystemCoreClock / 1000U);
+
+  /*Configure the SysTick IRQ priority */
+  HAL_NVIC_SetPriority(SysTick_IRQn, TickPriority ,0U);
+
+   /* Return function status */
+  return HAL_OK;
+}
+__weak uint32_t HAL_GetTick(void)
+{
+  return uwTick;
+}
+
+__weak void HAL_IncTick(void)
+{
+  uwTick++;
+}
+#endif
+
 
 #define RCC_CFGR_HPRE_BITNUMBER           POSITION_VAL(RCC_CFGR_HPRE)
 
