@@ -104,6 +104,18 @@ class can_thread(threading.Thread):
 
     def connect(self):
         self.__caniface.Uninitialize(self.__canbus)
+        self.__caniface.SetValue(self.__canbus, pcan.PCAN_LISTEN_ONLY, pcan.PCAN_PARAMETER_ON)
+        result = self.__caniface.Initialize(self.__canbus, pcan.PCAN_BAUD_250K, pcan.PCAN_USB)
+        if result == pcan.PCAN_ERROR_OK:
+            print "Connected great" 
+            self.__connected = True
+        else:
+            print "Connection did not work " + str(hex(result)) 
+        return self.__connected
+    
+    def connect2(self):
+        self.__caniface.Uninitialize(self.__canbus)
+        #self.__caniface.SetValue(self.__canbus, pcan.PCAN_LISTEN_ONLY, pcan.PCAN_PARAMETER_ON)
         result = self.__caniface.Initialize(self.__canbus, pcan.PCAN_BAUD_250K, pcan.PCAN_USB)
         if result == pcan.PCAN_ERROR_OK:
             print "Connected great" 
@@ -230,6 +242,12 @@ class test_can():
                 self.__can.write(0x1eabcdef, [0x01, 0x02])
             elif data == 'connect' or data == 'c':
                 self.__connected = self.__can.connect()
+                if self.__connected:
+                    print 'Connect success'
+                else:
+                    print 'Connect Failed'
+            elif data == 'Connect' or data == 'C':
+                self.__connected = self.__can.connect2()
                 if self.__connected:
                     print 'Connect success'
                 else:
