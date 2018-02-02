@@ -21,6 +21,8 @@
 #include "simpleserial.h"
 #include "stm32f3_hal_lowlevel.h"
 #include "stm32f3_hal.h"
+#include "stm32f3xx_hal_gpio.h"
+#include "stm32f3xx_hal_rcc.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -42,12 +44,6 @@ void send_string(char *pString) {
 	return;
 }
 
-void send_adc(uint16_t val) {
-	char buf[50];
-	sprintf(buf, "ADC: %u\n", (unsigned int)val);
-	send_string(buf);
-}
-
 typedef struct can_input {
 	uint32_t msgnum;
 	uint32_t baseid;
@@ -60,8 +56,8 @@ typedef struct seccan_packet {
 	uint8_t payload[8];
 } seccan_packet;
 
-
-void get_can_packet(seccan_packet *out, can_input *in)
+//encrypts the data in in and puts the finished product in out
+void encrypt_can_packet(seccan_packet *out, can_input *in)
 {
 	uint8_t nonce_enc[16] = {0};
 	uint8_t nonce_auth[16] = {0};
@@ -100,6 +96,9 @@ void get_can_packet(seccan_packet *out, can_input *in)
 	out->msgnum = in->msgnum;
 }
 
+//decrypts in, putting the baseid, msgnum, and data into out
+//returns 0 upon successful authentication of the message
+//and nonzero for unsuccessful authentication of the message
 int decrypt_can_packet(can_input *out, seccan_packet *in)
 {
 	out->baseid = in->baseid;
@@ -143,6 +142,7 @@ int decrypt_can_packet(can_input *out, seccan_packet *in)
 	return memcmp(nonce_auth, in->payload + 4, 4);
 }
 
+//sends the info in packet over the CAN bus
 void send_can_packet(seccan_packet *packet)
 {
 	can_return_t rval = 0;
@@ -154,12 +154,13 @@ void send_can_packet(seccan_packet *packet)
 	}
 }
 
+//reads a message from the CAN bus and moves the data into packet
 int read_can_packet(seccan_packet *packet)
 {
 	can_return_t rval = 0;
 	uint32_t ext_id = 0;
 
-	if (rval = read_can(packet->payload, &ext_id, 8), rval < 0 && rval != CAN_RET_TIMEOUT) {
+	if (rval = read_can(packet->payload, &ext_id, 8), rval < 0) {
 		print_can_error("Rx ERROR:", rval);
 		return -1;
 	} else {
@@ -184,15 +185,99 @@ void setup(void)
 	aes_indep_init();
 }
 
-int main(void) {
-	adc_return_t adcerr;
 
+void setup_led(void)
+{
+	__HAL_RCC_GPIOC_CLK_ENABLE();
+
+	GPIO_InitTypeDef GpioInit;
+	GpioInit.Pin       = GPIO_PIN_15;
+	GpioInit.Mode      = GPIO_MODE_OUTPUT_PP;
+	GpioInit.Pull      = GPIO_NOPULL;
+	GpioInit.Speed     = GPIO_SPEED_FREQ_HIGH;
+	HAL_GPIO_Init(GPIOC, &GpioInit);
+
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, RESET);
+}
+
+void master_stm_loop(void)
+{
 	can_input my_data = {
 				.msgnum = 0x456,
-				.baseid = 0x2D0,
-				.data = {0xDE, 0xAD, 0xBE, 0xEF}
+				.baseid = 0x2DD,
+				.data = {0x12, 0x34, 0x56, 0x78}
 	};
-	seccan_packet packet = {0};
+	can_input their_data;
+	seccan_packet packet;
+	setup_led();
+
+	while (1) {
+		encrypt_can_packet(&packet, &my_data);
+		send_can_packet(&packet);
+
+		my_data.msgnum++;
+		uint32_t timeout = 0;
+
+		while (timeout++ < 50) {
+			if (!read_can_packet(&packet)) {
+				if (decrypt_can_packet(&their_data, &packet))
+					break;
+				uint16_t voltage = their_data.data[0] | (their_data.data[1] <<  8);
+				if (voltage > 1800)
+					//turn LED on
+					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, SET);
+				else
+					//turn LED off
+					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, RESET);
+				break;
+			}
+		}
+	}
+}
+
+void adc_stm_loop(void)
+{
+	adc_return_t adcerr;
+	char master_msg[4] = {0x12, 0x34, 0x56, 0x78};
+	adcerr = init_ADC();
+	if (adcerr < 0) {
+		print_adc_error("Error initializing ADC", adcerr);
+	}
+	can_input my_data = {
+				.msgnum = 0x0,
+				.baseid = 0x200,
+				.data = {0x12, 0x34, 0x56, 0x78}
+	};
+	can_input their_data;
+	seccan_packet packet;
+
+	while(1) {
+
+		//wait for packet
+		while (read_can_packet(&packet));
+
+		if (!decrypt_can_packet(&their_data, &packet)) {
+			if (!memcmp(their_data.data, master_msg, 4)) {
+
+				//packet all good, so start doing adc
+				uint16_t adc_value = 0;
+				if (adcerr = read_ADC(&adc_value), adcerr == 0) {
+					my_data.data[0] = (adc_value) & 0xFF;
+					my_data.data[1] = (adc_value >> 8);
+					encrypt_can_packet(&packet, &my_data);
+					send_can_packet(&packet);
+					my_data.msgnum++;
+				} else {
+					print_adc_error("", adcerr);
+				}
+			}
+		}
+
+	}
+}
+
+int main(void) {
+
 
 	setup();
 	send_string("Starting...\n");
@@ -200,28 +285,8 @@ int main(void) {
 	for (volatile unsigned int i = 0; i < 10000; i++)
 		;
 
-	adcerr = init_ADC();
-	if (adcerr < 0) {
-		print_adc_error("Error initializing ADC", adcerr);
-	}
-
-	while (1) {
-		uint16_t adc_value = 0;
-		if (adcerr = read_ADC(&adc_value), adcerr == 0) {
-			my_data.data[0] = (adc_value) & 0xFF;
-			my_data.data[1] = (adc_value >> 8);
-			get_can_packet(&packet, &my_data);
-			send_can_packet(&packet);
-			my_data.msgnum++;
-		} else {
-			print_adc_error("", adcerr);
-		}
-
-		for (volatile unsigned int j = 0; j < 50; j++) {
-			for (volatile unsigned int i = 0; i < 10000; i++)
-				;
-		}
-	}
+	master_stm_loop();
+	//adc_stm_loop();
 }
 
 static void print_can_error(char *pstring, can_return_t canError) {

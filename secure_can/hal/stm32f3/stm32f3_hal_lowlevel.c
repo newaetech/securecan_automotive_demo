@@ -49,7 +49,7 @@
 //#define assert_param(expr) ((void)0U)
 uint32_t hal_sys_tick;
 uint32_t uwTick = 0;
-#define ENABLE_TICK_TIMING 0
+//#define ENABLE_TICK_TIMING 0
 
 #ifndef ENABLE_TICK_TIMING
 HAL_StatusTypeDef HAL_InitTick(uint32_t TickPriority)

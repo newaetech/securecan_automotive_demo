@@ -32,7 +32,7 @@ void MX_CAN_Init(void) {
 	myhcan.Instance = CAN;
 	myhcan.Init.Prescaler = 8;
 	myhcan.Init.Mode = CAN_MODE_NORMAL;
-	myhcan.Init.SJW = CAN_SJW_4TQ;
+	myhcan.Init.SJW = CAN_SJW_1TQ;
 	myhcan.Init.BS1 = CAN_BS1_2TQ;
 	myhcan.Init.BS2 = CAN_BS2_1TQ;
 	myhcan.Init.TTCM = DISABLE;
@@ -155,8 +155,8 @@ can_return_t write_can(uint32_t address, uint8_t *pdata, int length) {
 
 	if (myhcan.State == HAL_CAN_STATE_TIMEOUT) {
 		//restart bus?
-		//HAL_CAN_DeInit(&myhcan);
-		//MX_CAN_Init();
+		HAL_CAN_DeInit(&myhcan);
+		MX_CAN_Init();
 	}
 	if (canError == HAL_OK) {
 		return (index);
