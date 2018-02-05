@@ -23,6 +23,7 @@
 #include "stm32f3_hal.h"
 #include "stm32f3xx_hal_gpio.h"
 #include "stm32f3xx_hal_rcc.h"
+#include "stm32f3xx_hal_tim.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -198,6 +199,75 @@ void setup_led(void)
 	HAL_GPIO_Init(GPIOC, &GpioInit);
 
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, RESET);
+
+	GpioInit.Pin       = GPIO_PIN_13;
+	GpioInit.Mode      = GPIO_MODE_INPUT;
+	GpioInit.Pull      = GPIO_NOPULL;
+	HAL_GPIO_Init(GPIOC, &GpioInit);
+}
+
+
+
+static TIM_OC_InitTypeDef pwm;
+
+static TIM_HandleTypeDef tim;
+int setup_PWM(void)
+{
+	HAL_StatusTypeDef rtn;
+	__HAL_RCC_TIM1_CLK_ENABLE();
+	__HAL_RCC_GPIOA_CLK_ENABLE();
+
+	GPIO_InitTypeDef GpioInit;
+	GpioInit.Pin       = GPIO_PIN_11;
+	GpioInit.Mode      = GPIO_MODE_AF_PP;
+	GpioInit.Pull      = GPIO_NOPULL;
+	GpioInit.Speed     = GPIO_SPEED_FREQ_HIGH;
+	GpioInit.Alternate = GPIO_AF11_TIM1;
+	HAL_GPIO_Init(GPIOA, &GpioInit);
+
+
+	tim.Instance = TIM1;
+	//tim.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;tim.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
+	tim.Init.CounterMode = TIM_COUNTERMODE_DOWN;
+	tim.Init.Prescaler = 0;
+	tim.Init.Period = 0xFFFF;
+	tim.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+	tim.Init.RepetitionCounter = 0x0;
+	tim.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+
+
+
+	pwm.OCMode = TIM_OCMODE_PWM1;
+	pwm.Pulse = 0;
+	pwm.OCPolarity = TIM_OCPOLARITY_HIGH;
+	pwm.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+	pwm.OCFastMode = TIM_OCFAST_ENABLE; //s;nic
+	pwm.OCIdleState = TIM_OCIDLESTATE_RESET;
+	pwm.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+
+	tim.Channel = HAL_TIM_ACTIVE_CHANNEL_4;
+
+	rtn = HAL_TIM_PWM_Init(&tim);
+
+	rtn = HAL_TIM_PWM_ConfigChannel(&tim, &pwm, TIM_CHANNEL_4);
+	rtn = HAL_TIM_PWM_Start(&tim, TIM_CHANNEL_4);
+
+	if (rtn != HAL_OK) {
+		return -1;
+	}
+
+	return 0;
+}
+
+//0 = 0%
+//65535 = 100%
+void change_PWM(uint16_t dcycle)
+{
+	pwm.Pulse = dcycle;
+	//pwm.Pulse++;
+	//HAL_TIM_PWM_Stop(&tim, TIM_CHANNEL_4);
+	HAL_TIM_PWM_ConfigChannel(&tim, &pwm, TIM_CHANNEL_4);
+	HAL_TIM_PWM_Start(&tim, TIM_CHANNEL_4);
 }
 
 void master_stm_loop(void)
@@ -210,7 +280,7 @@ void master_stm_loop(void)
 	can_input their_data;
 	seccan_packet packet;
 	setup_led();
-
+	setup_PWM();
 	while (1) {
 		encrypt_can_packet(&packet, &my_data);
 		send_can_packet(&packet);
@@ -218,11 +288,13 @@ void master_stm_loop(void)
 		my_data.msgnum++;
 		uint32_t timeout = 0;
 
+
 		while (timeout++ < 50) {
 			if (!read_can_packet(&packet)) {
 				if (decrypt_can_packet(&their_data, &packet))
 					break;
-				uint16_t voltage = their_data.data[0] | (their_data.data[1] <<  8);
+				uint16_t voltage = their_data.data[0] | (their_data.data[1] << 8);
+				change_PWM(voltage << 4);
 				if (voltage > 1800)
 					//turn LED on
 					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, SET);

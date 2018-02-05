@@ -8,7 +8,6 @@
 
 UART_HandleTypeDef UartHandle;
 
-
 void platform_init(void)
 {
 	//HAL_Init();
