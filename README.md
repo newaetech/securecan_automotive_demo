@@ -6,3 +6,5 @@ Software of importance:
 
 * PCAN-View (used to send/receive packets)
 * PCAN-Basic API (includes Python API)
+
+secure-can/ contains all of the firmware for the project. To build for the STM32 that reads from the pedal, run make ISMASTER=NO. To build for the STM32 that controls the motor, run make.

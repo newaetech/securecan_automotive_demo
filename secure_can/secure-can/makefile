@@ -51,9 +51,16 @@ ifeq ($(MAKECMDGOALS), can)
 	CRYPTO_TARGET=TINYAES128C
 endif
 
-can: test 
-	echo "Building secure can"
-	echo Source files: $(SRC)
+#can: test 
+	#echo "Building secure can"
+	#echo Source files: $(SRC)
+#adc: CFLAGS += -DADC_STM
+#adc: all
+
+ifeq ($(ISMASTER), NO)
+#echo "Making ADC Can"
+CFLAGS += -DSTM_ADC
+endif
 
 ifeq ($(CRYPTO_TARGET),)
 CRYPTO_TARGET = AVRCRYPTOLIB

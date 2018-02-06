@@ -52,8 +52,6 @@ void send_can_packet(seccan_packet *packet)
 int read_can_packet(seccan_packet *packet)
 {
 	can_return_t rval = 0;
-	uint32_t ext_id = 0;
-
 	if (rval = read_can(packet->payload, &packet->ext_id, 8), rval < 0) {
 		print_can_error("Rx ERROR:", rval);
 		return -1;
@@ -165,8 +163,11 @@ int main(void) {
 	setup();
 	send_string("Starting...\n");
 
+#ifdef STM_ADC
+	adc_stm_loop();
+#else
 	master_stm_loop();
-	//adc_stm_loop();
+#endif
 }
 
 static void print_can_error(char *pstring, can_return_t canError) {
