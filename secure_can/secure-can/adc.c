@@ -35,7 +35,7 @@ adc_return_t init_ADC(void)
 	myadc.Init.ScanConvMode = ADC_SCAN_ENABLE; //just one channel needed, so no scanning
 	myadc.Init.EOCSelection = DISABLE;//ADC_EOC_SINGLE_CONV; //does this matter with one channel?
 	myadc.Init.LowPowerAutoWait = DISABLE;
-	myadc.Init.ContinuousConvMode = DISABLE; //single mode now
+	myadc.Init.ContinuousConvMode = ENABLE; //single mode now
 	myadc.Init.NbrOfConversion = 1; //does this matter for single channel?
 	myadc.Init.DiscontinuousConvMode = DISABLE; //discarded with continuous mode
 	myadc.Init.NbrOfDiscConversion = 1; //discarded without Discont mode
@@ -52,7 +52,7 @@ adc_return_t init_ADC(void)
 	ADC_ChannelConfTypeDef channel;
 	channel.Channel = ADC_CHANNEL_4; //PB14
 	channel.Rank = ADC_REGULAR_RANK_1; //single conversion, does this matter?
-	channel.SamplingTime = ADC_SAMPLETIME_601CYCLES_5;
+	channel.SamplingTime = ADC_SAMPLETIME_19CYCLES_5;
 	channel.SingleDiff = ADC_SINGLE_ENDED;
 	channel.OffsetNumber = ADC_OFFSET_NONE;
 	channel.Offset = 0;
@@ -62,6 +62,9 @@ adc_return_t init_ADC(void)
 		return ADC_RET_CHANNEL_INIT;
 	}
 
+	if (HAL_ADC_Start(&myadc) != HAL_OK) {
+			return ADC_RET_ADC_START;
+	}
 
 	return 0;
 }
@@ -74,20 +77,13 @@ void adc_delay(void)
 
 adc_return_t read_ADC(uint16_t *val)
 {
-	if (HAL_ADC_Start(&myadc) != HAL_OK) {
-		return ADC_RET_ADC_START;
-	}
+
 	if (HAL_ADC_PollForConversion(&myadc, ADC_READ_TIMEOUT) == HAL_OK) {
 		//good to read
-		adc_delay();
 		*val = HAL_ADC_GetValue(&myadc);
 	} else {
 		//error
 		return ADC_RET_ADC_TIMEOUT;
-	}
-
-	if (HAL_ADC_Stop(&myadc) != HAL_OK) {
-		return ADC_RET_ADC_STOP;
 	}
 
 	return 0;
