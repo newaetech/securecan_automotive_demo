@@ -15,7 +15,7 @@ void platform_init(void)
 	RCC_OscInitTypeDef RCC_OscInitStruct;
 	RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE | RCC_OSCILLATORTYPE_HSI;
 	RCC_OscInitStruct.HSEState       = RCC_HSE_BYPASS;
-	RCC_OscInitStruct.HSIState       = RCC_HSI_OFF;
+	RCC_OscInitStruct.HSIState       = RCC_HSI_ON;
 	RCC_OscInitStruct.PLL.PLLSource  = RCC_PLL_NONE;
 	HAL_RCC_OscConfig(&RCC_OscInitStruct);
 

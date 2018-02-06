@@ -54,7 +54,7 @@ int read_can_packet(seccan_packet *packet)
 	can_return_t rval = 0;
 	uint32_t ext_id = 0;
 
-	if (rval = read_can(packet->payload, &ext_id, 8), rval < 0) {
+	if (rval = read_can(packet->payload, &packet->ext_id, 8), rval < 0) {
 		print_can_error("Rx ERROR:", rval);
 		return -1;
 	} else {
@@ -85,6 +85,7 @@ void master_stm_loop(void)
 	seccan_packet packet;
 	setup_PWM();
 	while (1) {
+	while (1) {
 #ifdef CAN_TWO_WAY
 		can_input my_data = {
 					.msgnum = 0x456,
@@ -108,6 +109,7 @@ void master_stm_loop(void)
 #ifdef CAN_TWO_WAY
 		}
 #endif
+	}
 	}
 }
 
@@ -163,8 +165,8 @@ int main(void) {
 	setup();
 	send_string("Starting...\n");
 
-	//master_stm_loop();
-	adc_stm_loop();
+	master_stm_loop();
+	//adc_stm_loop();
 }
 
 static void print_can_error(char *pstring, can_return_t canError) {

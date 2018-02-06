@@ -46,14 +46,14 @@ CFLAGS += -DSTM32F303xC
 CFLAGS += -DHS_INTERNAL_CLOCK=8000000
 OPT=0
 # -----------------------------------------------------------------------------
-#ifeq ($(MAKECMDGOALS), can)
-#PLATFORM=CW308_STM32F3
-#CRYPTO_TARGET=TINYAES128C
-#endif
+ifeq ($(MAKECMDGOALS), can)
+	PLATFORM=CW308_STM32F3
+	CRYPTO_TARGET=TINYAES128C
+endif
 
-#can: test 
-	#echo "Building secure can"
-	#echo Source files: $(SRC)
+can: test 
+	echo "Building secure can"
+	echo Source files: $(SRC)
 
 ifeq ($(CRYPTO_TARGET),)
 CRYPTO_TARGET = AVRCRYPTOLIB
@@ -69,5 +69,5 @@ include ../simpleserial/Makefile.simpleserial
 FIRMWAREPATH = ../.
 include $(FIRMWAREPATH)/Makefile.inc
 
-#test: 
-#	echo Source files: $SRC
+test: 
+	echo Source files: $SRC
